@@ -963,7 +963,7 @@ class TaskManagerNode(Node):
 
         # execute
         for idx, name, goal in enumerate(goal_dict.items()):
-            if name in  ['approach', 'retreet']: # 速度上書き
+            if name in  ['approach', 'retreat']: # 速度上書き
                 goal.request.max_velocity_scaling_factor = va[0]
                 goal.request.max_acceleration_scaling_factor = va[1]
 
@@ -1048,7 +1048,41 @@ class TaskManagerNode(Node):
                 break
         return False
 
-    async def try_place(self, pose_place_tip, setback=0.1, va=None, use_reverse=True, approach_axis=None, start_js=None) -> bool:
+    async def try_place2(
+        self, pose_place_tip, setback=0.1, va=None, use_reverse=True, approach_axis=None, start_js=None
+    ) -> bool:
+        if use_reverse:
+            pose_place_tip = ArmUtils.reverse_yaxis(pose_place_tip)
+        va = [0.1,0.1] if va is None else va
+
+        success, msg, goal_dict = await self.arm.place_planner(
+            tip_pose=pose_place_tip, setback=setback, start_js=None, approach_axis=approach_axis,
+        )
+        if not success:
+            return False, msg
+
+        # execute
+        for idx, name, goal in enumerate(goal_dict.items()):
+            if name in  ['approach', 'retreat']: # 速度上書き
+                goal.request.max_velocity_scaling_factor = va[0]
+                goal.request.max_acceleration_scaling_factor = va[1]
+
+            # arm
+            success, msg = await self.arm.move_to_joint_position_async(goal)
+            if not success:
+                return False, msg
+
+            # open gripper
+            if name == 'place':
+                self.arm.gripper.open)
+
+            # close
+            if name == 'retreat':
+                self.arm.gripper.close()
+        return True, '[SUCCESS]'
+
+    
+    async def _try_place(self, pose_place_tip, setback=0.1, va=None, use_reverse=True, approach_axis=None, start_js=None) -> bool:
         pose = ArmUtils.reverse_yaxis(pose_place_tip) if use_reverse else pose_place_tip
         if pose.header.frame_id == '':
             pose.header.frame_id = 'world'
