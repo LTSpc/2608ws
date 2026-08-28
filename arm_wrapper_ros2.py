@@ -80,8 +80,9 @@ class ArmWrapper:
         if USE_GRIPPER:
             self.gripper = GripperControl()
             self.gripper.close()
-            self.cbg_gripper = MutuallyExclusiveCallbackGroup()
+            self._gripper_js = None
             self.pub_js_gripper = self.node.create_publisher(JointState, '/gripper/joint_states', 10)
+            self.cbg_gripper = MutuallyExclusiveCallbackGroup()
             self.node.create_timer(1.0, self.publish_gripper_status, self.cbg_gripper)
 
     def publish_gripper_status(self):
@@ -93,6 +94,8 @@ class ArmWrapper:
         msg.name = ['robotiq_85_left_knuckle_joint',]
         msg.position = [js,]
         self.pub_js_gripper.publish(msg)
+        with self._joint_state_lock:
+            self._gripper_js = msg
 
     def _joint_state_callback(self, msg: JointState):
         with self._joint_state_lock:
@@ -312,7 +315,11 @@ class ArmWrapper:
 
     async def place_planner(self, tip_pose, setback=0.1, start_js=None, approach_axis=None):
         # gripper widthはpublisherから取得できる
-        gripper_width = 0.0
+        if USE_GRIPPER and self._gripper_js is not None:
+            gripper_value = self._gripper_js.position[0]
+            gripper_width = GripperUtils.width_bin2mm(gripper_value * 255)
+        else:
+            gripper_width = 0.0
 
         # 姿勢計算 (退避->把持->退避)
         if isinstance(tip_pose, PoseStamped):
@@ -402,7 +409,11 @@ class ArmWrapper:
                 target_pose, gripper_width=10, setback=0.1, start_js=None, retreat_axis=None
             )
             print(goals)
-            return success
+            for name, goal in goals.items():
+                success = await self.move_to_joint_positions_async(goal)
+                if not success:
+                    return False
+            return True
 
     async def _on_trigger_move_pose(self, request, response):
         self.node.get_logger().info("Trigger received: move_pose")
