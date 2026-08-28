@@ -53,8 +53,12 @@ class ArmWrapper:
         self._joint_state_event = threading.Event()
         self._joint_state_lock = threading.Lock()
 
-        self._ik_client = self.node.create_client(GetPositionIK, "/compute_ik", callback_group=self.cbg_arm)
-        self._move_group_client = ActionClient(self.node, MoveGroup, "move_action", callback_group=self.cbg_arm)
+        self._ik_client = self.node.create_client(
+            GetPositionIK, "/compute_ik", callback_group=self.cbg_arm
+        )
+        self._move_group_client = ActionClient(
+            self.node, MoveGroup, "move_action", callback_group=self.cbg_arm
+        )
 
         self.node.create_subscription(
             JointState,
@@ -64,6 +68,7 @@ class ArmWrapper:
             callback_group=self.cbg_arm
         )
 
+        # demo
         self.node.create_service(
             Trigger,
             "move_pose",
@@ -124,7 +129,6 @@ class ArmWrapper:
         constraint = Constraints()
         constraint.joint_constraints.extend(constraints)
         goal.request.goal_constraints = [constraint]
-
         return True
 
     def _build_joint_path_constraints(
@@ -166,7 +170,6 @@ class ArmWrapper:
         # goal constraint
         if goal.request.goal_constraints is None:
             return False
-
         return True
 
     async def compute_ik_async(self, target_pose, start_js=None) -> Optional[JointState]:
@@ -210,7 +213,7 @@ class ArmWrapper:
         js = JointState()
         js.name = self.joint_names
         js.position = joint_position
-        return True, js #joint_position
+        return True, js
 
     async def compute_trajectory(self, poses_list, start_js=None):
         joint_position = start_js
@@ -250,33 +253,34 @@ class ArmWrapper:
             target_pose = target_pose.pose
 
         pose_grs = GripperUtils.cal_pick_tool0_pose(target_pose, gripper_width, 0.0) # tipの姿勢からtool0の姿勢を計算
-        poses = []
-        poses.append({
-            'name': 'approach',
-            'pose': ArmUtils.cal_retreat_pose(pose_grs, setback=setback, retreat_axis=None)
-        })
-        poses.append({
-            'name': 'grasp',
-            'pose': pose_grs
-        })
-        poses.append({
-            'name': 'retreat_micro',
-            'pose': ArmUtils.cal_retreat_pose(pose_grs, setback=0.010, retreat_axis=retreat_axis)
-        })
-        poses.append({
-            'name': 'retreat',
-            'pose': ArmUtils.cal_retreat_pose(pose_grs, setback=setback, retreat_axis=retreat_axis)
-        })
+        poses = [
+            {
+                'name': 'approach',
+                'pose': ArmUtils.cal_retreat_pose(pose_grs, setback=setback, retreat_axis=None)
+            }),
+            {
+                'name': 'grasp',
+                'pose': pose_grs
+            },
+            {
+                'name': 'retreat_micro',
+                'pose': ArmUtils.cal_retreat_pose(pose_grs, setback=0.010, retreat_axis=retreat_axis)
+            },
+            {
+                'name': 'retreat',
+                'pose': ArmUtils.cal_retreat_pose(pose_grs, setback=setback, retreat_axis=retreat_axis)
+            },
+        ]
 
-        # 可視化情報 (ここでは発信せずに返す)
-        tf_dict = {}
-        for pose_info in poses:
-            if pose_info['name'] in ['grasp', 'retreet']:
-                pose_pub = PoseStamped()
-                pose_pub.header.frame_id = 'world'
-                pose_pub.header.stamp = self.node.get_clock().now().to_msg()
-                pose_pub.pose = pose_info['pose']
-                tf_dict[f'pickup_{pose_info["name"]}_tool0'] = pose_pub
+        # # 可視化情報 (ここでは発信せずに返す)
+        # tf_dict = {}
+        # for pose_info in poses:
+        #     if pose_info['name'] in ['grasp', 'retreet']:
+        #         pose_pub = PoseStamped()
+        #         pose_pub.header.frame_id = 'world'
+        #         pose_pub.header.stamp = self.node.get_clock().now().to_msg()
+        #         pose_pub.pose = pose_info['pose']
+        #         tf_dict[f'pickup_{pose_info["name"]}_tool0'] = pose_pub
 
         # ikチェック (正式にはtrajectoryのikを実装予定)
         success = await self.compute_trajectory(poses, start_js)
@@ -293,8 +297,8 @@ class ArmWrapper:
             name = pose_info['name']
 
             goal = MoveGroup.Goal()
-            goal.request.max_velocity_scaling_factor = 0.1 # 実行時の上書きを前提
-            goal.request.max_acceleration_scaling_factor = 0.1 # 実行時の上書きを前提
+            goal.request.max_velocity_scaling_factor = 0.1 # 実行時の上書きを想定
+            goal.request.max_acceleration_scaling_factor = 0.1 # 実行時の上書きを想定
 
             succecss, joint_position = await self.pose_to_js(pose, start_js=joint_position)
             if not success:
@@ -306,7 +310,70 @@ class ArmWrapper:
             goal_dict[name] = goal
         return True, '[SUCCESS]', goal_dict
 
+    async def place_planner(self, tip_pose, setback=0.1, start_js=None, approach_axis=None):
+        # gripper widthはpublisherから取得できる
+        gripper_width = 0.0
 
+        # 姿勢計算 (退避->把持->退避)
+        if isinstance(tip_pose, PoseStamped):
+            tip_pose = target_pose.pose
+        
+        pose_place = GripperUtils.cal_pick_tool0_pose(pose, gripper_width, 0.0) # tipの姿勢からtool0の姿勢を計算
+        poses = [
+            {
+                'name': 'approach',
+                'pose': ArmUtils.cal_retreat_pose(
+                    pose_place, setback=setback, retreat_axis=approach_axis
+                )
+            }),
+            {
+                'name': 'place',
+                'pose': pose_place
+            },
+            {
+                'name': 'retreat',
+                'pose': ArmUtils.cal_retreat_pose(pose_place, setback)
+            },
+        ]
+
+        # # 可視化情報 (ここでは発信せずに返す)
+        # tf_dict = {}
+        # for pose_info in poses:
+        #     if pose_info['name'] in ['place', 'retreet']:
+        #         pose_pub = PoseStamped()
+        #         pose_pub.header.frame_id = 'world'
+        #         pose_pub.header.stamp = self.node.get_clock().now().to_msg()
+        #         pose_pub.pose = pose_info['pose']
+        #         tf_dict[f'pickup_{pose_info["name"]}_tool0'] = pose_pub
+
+        # ikチェック (正式にはtrajectoryのikを実装予定)
+        success = await self.compute_trajectory(poses, start_js)
+        if not success:
+            return False, 'ik_fail', {}
+        else:
+            self.node.get_logger().info('[SUCCESS] pre-ik check')
+
+        # goal
+        goal_dict = {}
+        joint_position = start_js
+        for i, pose_info in enumerate(poses):
+            pose = pose_info['pose']
+            name = pose_info['name']
+
+            goal = MoveGroup.Goal()
+            goal.request.max_velocity_scaling_factor = 0.1 # 実行時の上書きを想定
+            goal.request.max_acceleration_scaling_factor = 0.1 # 実行時の上書きを想定
+
+            succecss, joint_position = await self.pose_to_js(pose, start_js=joint_position)
+            if not success:
+                return False, '[FAIL]build goal', {}
+
+            success = self.build_joint_goal_constraints(goal, joint_position, tolerance=0.001)
+            if not success:
+                return False, '[FAIL]build goal2', {}
+            goal_dict[name] = goal
+        return True, '[SUCCESS]', goal_dict
+    
     # === demo ===
     async def move_demo(self) -> bool:
         target_pose = Pose()
@@ -331,7 +398,9 @@ class ArmWrapper:
             return await self.move_to_joint_positions_async(goal)
 
         if True:
-            success, msg, goals = await self.pickup_planner(target_pose, gripper_width=10, setback=0.1, start_js=None, retreat_axis=None)
+            success, msg, goals = await self.pickup_planner(
+                target_pose, gripper_width=10, setback=0.1, start_js=None, retreat_axis=None
+            )
             print(goals)
             return success
 
